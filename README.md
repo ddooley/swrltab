@@ -13,7 +13,7 @@ A [Protégé Desktop Ontology Editor](http://protege.stanford.edu)-based [SWRLTa
 
 To build and run this project you must have the following items installed:
 
-+ [Java 8](http://www.oracle.com/technetwork/java/javase/downloads/index.html)
++ [Java 11](http://www.oracle.com/technetwork/java/javase/downloads/index.html) or later
 + A tool for checking out a [Git](http://git-scm.com/) repository
 + Apache's [Maven](http://maven.apache.org/index.html)
 
