@@ -78,6 +78,16 @@
       <artifactId>slf4j-simple</artifactId>
     </dependency>
 
+
+    <!-- Override transitive mvel2 2.4.x to fix Java 17+ incompatibility.
+         MVEL 2.4.x references java.lang.Compiler which was removed in Java 17.
+         MVEL 2.5.x is API-compatible with Drools 7.74 and supports Java 17+. -->
+    <dependency>
+        <groupId>org.mvel</groupId>
+        <artifactId>mvel2</artifactId>
+        <version>2.5.2.Final</version>
+    </dependency>
+
   </dependencies>
 
   <build>
@@ -85,7 +95,7 @@
     <plugins>
 
       <plugin>
-	<groupId>org.apache.maven.plugins</groupId>
+        <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
       </plugin>
 
