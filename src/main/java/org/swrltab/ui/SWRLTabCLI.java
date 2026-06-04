@@ -73,6 +73,8 @@ public class SWRLTabCLI {
     boolean noColor = false;
     String configPath = null;
     String format = "tsv";
+    String outputFilePath = null;
+    String outputIri = null;
     List<String> constraints = new ArrayList<>();
 
     int i = 0;
@@ -141,6 +143,14 @@ public class SWRLTabCLI {
         case "--save":
           save = true;
           break;
+        case "--output-file":
+          if (++i >= args.length) usage("--output-file requires a file path");
+          outputFilePath = args[i];
+          break;
+        case "--output-iri":
+          if (++i >= args.length) usage("--output-iri requires an IRI");
+          outputIri = args[i];
+          break;
         case "--config":
           if (++i >= args.length) usage("--config requires a file path");
           configPath = args[i];
@@ -178,6 +188,13 @@ public class SWRLTabCLI {
     if (delete && ruleNames.isEmpty()) usage("--delete requires --rules <name[,name…]>");
     if (delete && !save) System.err.println("Warning: --delete without --save removes rules in memory only; changes will not be persisted");
 
+    boolean inferenceMode = infer || (!ruleNames.isEmpty() && !delete) || ruleText != null;
+    if (outputFilePath != null && !inferenceMode)
+      System.err.println("Warning: --output-file only applies to --infer, --rules, or --rule-text; ignoring");
+    if (outputIri != null && outputFilePath == null)
+      System.err.println("Warning: --output-iri has no effect without --output-file");
+    File outputFile = (outputFilePath != null && inferenceMode) ? new File(outputFilePath) : null;
+
     File owlFile = new File(ontologyPath);
     if (!owlFile.exists()) {
       System.err.println("Error: ontology file not found: " + owlFile.getAbsolutePath());
@@ -211,9 +228,11 @@ public class SWRLTabCLI {
       if (format.equals("markdown"))
         System.out.println("<style>\nbody, .markdown-body { max-width: 90%; }\n" + generateEntityCSS(config) + "\n</style>\n");
       if (infer) {
-        runInference(manager, ontology, ontologyName, catalogNote, format, debug, noColor, config);
+        runInference(manager, ontology, ontologyName, catalogNote, format, debug, noColor, config,
+            outputFile, outputIri);
       } else if (!ruleNames.isEmpty() && !delete) {
-        runRules(manager, ontology, ruleNames, debug, constraints, format, ontologyName, catalogNote, noColor, config);
+        runRules(manager, ontology, ruleNames, debug, constraints, format, ontologyName, catalogNote,
+            noColor, config, outputFile, outputIri);
       } else if (ruleText != null) {
         Map<String, IRI> labelToIRI = buildLabelToIRIMap(ontology);
         Map<String, String> ruleTextPrefixes = buildMergedPrefixMap(manager, ontology);
@@ -221,7 +240,7 @@ public class SWRLTabCLI {
         SWRLRuleEngine parseEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
         parseEngine.createSWRLRule(ruleTextName, ruleText);
         runRules(manager, ontology, Collections.singletonList(ruleTextName), debug, constraints,
-            format, ontologyName, catalogNote, noColor, config);
+            format, ontologyName, catalogNote, noColor, config, outputFile, outputIri);
       } else if (delete) {
         int removed = 0;
         for (String name : ruleNames) {
@@ -254,7 +273,7 @@ public class SWRLTabCLI {
         }
       }
     } catch (IOException e) {
-      System.err.println("Error reading file: " + e.getMessage());
+      System.err.println("I/O error: " + e.getMessage());
       System.exit(1);
     } catch (OWLOntologyCreationException e) {
       System.err.println("Error loading ontology: " + e.getMessage());
@@ -531,8 +550,9 @@ public class SWRLTabCLI {
    */
   private static void runInference(OWLOntologyManager manager, OWLOntology ontology,
       String ontologyName, String catalogNote, String format, boolean debug, boolean noColor,
-      SwrltabConfig config)
-      throws SWRLAPIException, OWLOntologyCreationException, OWLOntologyStorageException {
+      SwrltabConfig config, File outputFile, String outputIri)
+      throws SWRLAPIException, OWLOntologyCreationException, OWLOntologyStorageException,
+             IOException {
     SWRLRuleEngine engine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
 
     // Collect user-defined rules BEFORE inference: calling infer() causes the engine to
@@ -573,19 +593,28 @@ public class SWRLTabCLI {
     }
 
     System.err.println(ontologyHeader(ontologyName, catalogNote, inferred.size(), format));
-    if (inferred.isEmpty()) return;
+    if (inferred.isEmpty() && outputFile == null) return;
 
-    OWLOntology output = manager.createOntology();
+    OWLOntology output = (outputIri != null)
+        ? manager.createOntology(IRI.create(outputIri))
+        : manager.createOntology();
     manager.addAxioms(output, inferred);
 
     // Carry prefix declarations from the source ontology for readable IRI output.
-    FunctionalSyntaxDocumentFormat outputFormat = new FunctionalSyntaxDocumentFormat();
+    FunctionalSyntaxDocumentFormat outputFmt = new FunctionalSyntaxDocumentFormat();
     OWLDocumentFormat srcFormat = manager.getOntologyFormat(ontology);
     if (srcFormat != null && srcFormat.isPrefixOWLOntologyFormat()) {
-      outputFormat.copyPrefixesFrom(srcFormat.asPrefixOWLOntologyFormat());
+      outputFmt.copyPrefixesFrom(srcFormat.asPrefixOWLOntologyFormat());
     }
 
-    manager.saveOntology(output, outputFormat, System.out);
+    if (outputFile != null) {
+      try (OutputStream os = Files.newOutputStream(outputFile.toPath())) {
+        manager.saveOntology(output, outputFmt, os);
+      }
+      System.err.println("Wrote " + inferred.size() + " inferred axiom(s) to " + outputFile.getPath());
+    } else {
+      manager.saveOntology(output, outputFmt, System.out);
+    }
   }
 
   /**
@@ -597,8 +626,10 @@ public class SWRLTabCLI {
    */
   private static void runRules(OWLOntologyManager manager, OWLOntology ontology,
       List<String> targetRules, boolean debug, List<String> constraints, String format,
-      String ontologyName, String catalogNote, boolean noColor, SwrltabConfig config)
-      throws SWRLAPIException, OWLOntologyCreationException, OWLOntologyStorageException {
+      String ontologyName, String catalogNote, boolean noColor, SwrltabConfig config,
+      File outputFile, String outputIri)
+      throws SWRLAPIException, OWLOntologyCreationException, OWLOntologyStorageException,
+             IOException {
     // Resolve rule names via SWRLAPI's naming logic.  Build an ordered list of
     // target rule objects and a list of all non-target rules to be removed.
     SWRLRuleEngine tempEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
@@ -663,17 +694,27 @@ public class SWRLTabCLI {
     }
 
     System.err.println(ontologyHeader(ontologyName, catalogNote, inferred.size(), format));
-    if (inferred.isEmpty()) return;
+    if (inferred.isEmpty() && outputFile == null) return;
 
-    OWLOntology output = manager.createOntology();
+    OWLOntology output = (outputIri != null)
+        ? manager.createOntology(IRI.create(outputIri))
+        : manager.createOntology();
     manager.addAxioms(output, inferred);
 
-    FunctionalSyntaxDocumentFormat outputFormat = new FunctionalSyntaxDocumentFormat();
+    FunctionalSyntaxDocumentFormat outputFmt = new FunctionalSyntaxDocumentFormat();
     OWLDocumentFormat srcFormat = manager.getOntologyFormat(ontology);
     if (srcFormat != null && srcFormat.isPrefixOWLOntologyFormat()) {
-      outputFormat.copyPrefixesFrom(srcFormat.asPrefixOWLOntologyFormat());
+      outputFmt.copyPrefixesFrom(srcFormat.asPrefixOWLOntologyFormat());
     }
-    manager.saveOntology(output, outputFormat, System.out);
+
+    if (outputFile != null) {
+      try (OutputStream os = Files.newOutputStream(outputFile.toPath())) {
+        manager.saveOntology(output, outputFmt, os);
+      }
+      System.err.println("Wrote " + inferred.size() + " inferred axiom(s) to " + outputFile.getPath());
+    } else {
+      manager.saveOntology(output, outputFmt, System.out);
+    }
   }
 
   /**

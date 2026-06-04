@@ -94,6 +94,8 @@ OWLAPI detects the ontology format from file content rather than extension. Comm
 |---|---|
 | `--format tsv\|csv\|markdown\|txt` | Output format (default: `tsv`). `tsv` and `csv` apply to query results. `markdown` renders `--debug` evaluation reports as markdown tables, and renders `--list-rules`/`--list-queries` as a `<pre>` block in `.swrl` file syntax with variables coloured by entity type. `txt` renders `--list-rules`/`--list-queries` as plain-text `.swrl` file syntax (no HTML, no colour spans) — output can be piped directly to a file and used as `--file` input. |
 | `--no-color` | Disable per-argument HTML colour spans in `--format markdown` output. Applies to both `--debug` evaluation tables and `--list-rules`/`--list-queries`; with listing modes, `--no-color` produces spans-free output that can be pasted directly into a `--file` input. |
+| `--output-file <path>` | Write inferred axioms to this file in OWL Functional Syntax instead of stdout. Applies to `--infer`, `--rules`, and `--rule-text`. The file is always written even when no axioms were inferred (producing an empty ontology), so it can be unconditionally referenced as an `owl:imports` target. |
+| `--output-iri <iri>` | Stamp the output ontology with this IRI (e.g. `http://example.org/inferred.ofn`). Required for the file to be usable as an `owl:imports` target. Only meaningful with `--output-file`. |
 | `--config <path>` | Load a custom `swrltab_config.yaml` from the given path instead of (or in addition to) the default locations. |
 | `--ignore-imports` | Silently skip unresolvable `owl:imports` declarations |
 
@@ -131,6 +133,14 @@ To persist the edits back into the ontology file:
 Fire all rules and print inferred axioms:
 
     ./swrltabcli --infer ontology.ofn
+
+Write inferred axioms to a separate OWL file (suitable as an `owl:imports` target):
+
+    ./swrltabcli --infer --output-file inferred.ofn --output-iri http://example.org/inferred.ofn ontology.ofn
+
+Fire a single named rule and capture inferences to a file:
+
+    ./swrltabcli --rules "MyRuleName" --output-file inferred.ofn --output-iri http://example.org/inferred.ofn ontology.ofn
 
 Fire a single named rule:
 
