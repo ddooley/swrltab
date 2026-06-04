@@ -221,6 +221,9 @@ When using `--file`, each entry in the file is declared with a `rule` or `query`
 # Blank lines are ignored
 
 rule TransitivePartOf
+# A # comment immediately after the rule/query header (before the first body atom)
+# is stored as the rule's rdfs:comment description in the ontology.
+# Multiple consecutive comment lines are joined with a space.
 part of(?x, ?y) ^ part of(?y, ?z) -> part of(?x, ?z)
 
 rule "Rule With Spaces In Name"
@@ -230,6 +233,7 @@ MyClass(?x) ^ hasProperty(?x, ?y) -> MyOtherClass(?x)
 # Leading indentation is ignored.  ^ and -> may appear at the start of
 # a continuation line.  Inline comments are also supported.
 rule ComplexProcessRule
+# Fires when a process input material exceeds 10 kg.
   "has specified input"(?p, ?m)   # quoted labels are resolved via rdfs:label
   ^ "has characteristic"(?m, ?c)
   ^ "mass in kilograms"(?c, ?mass)
@@ -247,6 +251,7 @@ Key formatting rules:
 - `^` and `->` may appear at the start of a continuation line.
 - A `#` anywhere on a body line starts an inline comment (everything from `#` to end of line is discarded). Exception: `#` inside an angle-bracket IRI (`<http://example.org/ont#fragment>`) is preserved.
 - **`# rule Name` / `# query Name`** — a whole-line comment whose text begins with `rule ` or `query ` (case-insensitive) is treated as a directive with the `#` stripped. This means both `rule MyRule` and `# rule MyRule` are valid directive forms.
+- **Description comments** — one or more `#` comment lines placed immediately after a `rule`/`query` header line (before the first body atom) are stored as the rule's `rdfs:comment` annotation in the ontology. Multiple consecutive lines are joined with a space. These descriptions are round-tripped by `--list-rules --format txt` and `--format markdown` and are visible in Protégé's rule editor.
 - **Quoted predicate labels** — a double- or single-quoted string used as a predicate (e.g. `'has specified input'(...)` or `"has specified input"(...)`) is automatically resolved to its ontology IRI via `rdfs:label` lookup across the full imports closure. The resolved IRI is expressed as a prefixed name if a matching prefix is declared, or as `<full-iri>` otherwise. An unresolved label produces a warning and will cause a parse error. This resolution also applies to `--rule-text` and `--query-text` inline expressions. The `--list-rules --format markdown` output uses single quotes.
 - Unquoted predicate names must be valid SWRLAPI identifiers: an IRI fragment name (e.g. `hasSpecifiedInput`) or a prefixed name (e.g. `ex:hasSpecifiedInput`).
 

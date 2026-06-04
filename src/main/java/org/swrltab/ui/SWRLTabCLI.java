@@ -324,6 +324,45 @@ public class SWRLTabCLI {
     return false;
   }
 
+  /** Returns the first {@code rdfs:comment} literal on a rule axiom, or {@code null} if absent. */
+  private static String ruleComment(SWRLRule rule, OWLAnnotationProperty commentProp) {
+    for (OWLAnnotation ann : rule.getAnnotations(commentProp)) {
+      if (ann.getValue() instanceof OWLLiteral) {
+        String text = ((OWLLiteral) ann.getValue()).getLiteral();
+        if (!text.isEmpty()) return text;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Adds (or replaces) an {@code rdfs:comment} annotation on the {@code SWRLRule} axiom whose
+   * {@code rdfs:label} matches {@code name}.  Called after
+   * {@link SWRLRuleEngine#createSWRLRule} to attach a description loaded from a {@code .swrl}
+   * file.
+   */
+  private static void addCommentToRule(OWLOntology ontology, String name, String comment) {
+    OWLOntologyManager manager = ontology.getOWLOntologyManager();
+    OWLDataFactory df = manager.getOWLDataFactory();
+    OWLAnnotationProperty labelProp = df.getRDFSLabel();
+    OWLAnnotationProperty commentProp = df.getRDFSComment();
+    for (SWRLRule r : new ArrayList<>(ontology.getAxioms(AxiomType.SWRL_RULE))) {
+      for (OWLAnnotation ann : r.getAnnotations(labelProp)) {
+        if (ann.getValue() instanceof OWLLiteral
+            && name.equals(((OWLLiteral) ann.getValue()).getLiteral())) {
+          // Collect existing annotations (keeps rdfs:label etc.) minus any prior rdfs:comment,
+          // then add the new one.
+          Set<OWLAnnotation> newAnns = new HashSet<>(r.getAnnotations());
+          newAnns.removeIf(a -> a.getProperty().equals(commentProp));
+          newAnns.add(df.getOWLAnnotation(commentProp, df.getOWLLiteral(comment)));
+          manager.removeAxiom(ontology, r);
+          manager.addAxiom(ontology, r.getAnnotatedAxiom(newAnns));
+          return;
+        }
+      }
+    }
+  }
+
   /**
    * Parses a SWRL/SQWRL text file and registers each entry in the ontology.
    *
@@ -354,6 +393,8 @@ public class SWRLTabCLI {
     Map<String, String> prefixes = buildMergedPrefixMap(ontology.getOWLOntologyManager(), ontology);
 
     String currentName = null;
+    String currentComment = null;
+    boolean awaitingBody = false;
     StringBuilder body = new StringBuilder();
     int loaded = 0;
 
@@ -368,7 +409,13 @@ public class SWRLTabCLI {
         if (afterLower.startsWith("rule ") || afterLower.startsWith("query ")) {
           line = stripInlineComment(afterHash).trim(); // drop '#' and any trailing inline comment
         } else {
-          continue; // regular comment — skip
+          // A # comment line that appears after a rule/query header but before the first body
+          // atom is treated as the rule's rdfs:comment description.  Multiple consecutive
+          // comment lines are joined with a space.
+          if (awaitingBody && currentName != null && !afterHash.isEmpty()) {
+            currentComment = (currentComment == null) ? afterHash : currentComment + " " + afterHash;
+          }
+          continue; // not a body line
         }
       } else {
         line = stripInlineComment(rawLine).trim();
@@ -382,6 +429,7 @@ public class SWRLTabCLI {
           String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes);
           removeExistingRuleByName(ontology, currentName, true);
           engine.createSWRLRule(currentName, expr);
+          if (currentComment != null) addCommentToRule(ontology, currentName, currentComment);
           loaded++;
           body.setLength(0);
         }
@@ -392,10 +440,13 @@ public class SWRLTabCLI {
             && ((currentName.startsWith("\"") && currentName.endsWith("\""))
                 || (currentName.startsWith("'") && currentName.endsWith("'"))))
           currentName = currentName.substring(1, currentName.length() - 1);
+        currentComment = null;
+        awaitingBody = true;
       } else if (currentName != null) {
         // Continuation of the current rule/query body
         if (body.length() > 0) body.append(" ");
         body.append(line);
+        awaitingBody = false;
       } else {
         System.err.println("Warning: skipping line before any rule/query declaration in "
             + filePath + ": " + line);
@@ -407,6 +458,7 @@ public class SWRLTabCLI {
       String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes);
       removeExistingRuleByName(ontology, currentName, true);
       engine.createSWRLRule(currentName, expr);
+      if (currentComment != null) addCommentToRule(ontology, currentName, currentComment);
       loaded++;
     }
 
@@ -819,6 +871,7 @@ public class SWRLTabCLI {
     if (format.equals("markdown") || format.equals("txt")) {
       Map<IRI, String> labels = buildLabelMap(ontology);
       Map<String, String> prefixes = buildMergedPrefixMap(manager, ontology);
+      OWLAnnotationProperty commentProp = manager.getOWLDataFactory().getRDFSComment();
       boolean pre = format.equals("markdown");
       boolean effectiveNoColor = format.equals("txt") || noColor;
       if (pre) System.out.println("<pre>");
@@ -826,8 +879,9 @@ public class SWRLTabCLI {
       for (SWRLAPIRule r : queries) {
         if (!first) System.out.println();
         first = false;
+        String comment = ruleComment(r, commentProp);
         System.out.println("query " + r.getRuleName());
-        printAtomBlock(r, labels, prefixes, effectiveNoColor, config);
+        printAtomBlock(r, labels, prefixes, effectiveNoColor, config, comment);
       }
       if (pre) System.out.println("</pre>");
     } else {
@@ -853,6 +907,7 @@ public class SWRLTabCLI {
     if (format.equals("markdown") || format.equals("txt")) {
       Map<IRI, String> labels = buildLabelMap(ontology);
       Map<String, String> prefixes = buildMergedPrefixMap(manager, ontology);
+      OWLAnnotationProperty commentProp = manager.getOWLDataFactory().getRDFSComment();
       boolean pre = format.equals("markdown");
       boolean effectiveNoColor = format.equals("txt") || noColor;
       if (pre) System.out.println("<pre>");
@@ -861,8 +916,9 @@ public class SWRLTabCLI {
         if (!first) System.out.println();
         first = false;
         String status = r.isActive() ? "" : "  # inactive";
+        String comment = ruleComment(r, commentProp);
         System.out.println("rule " + r.getRuleName() + status);
-        printAtomBlock(r, labels, prefixes, effectiveNoColor, config);
+        printAtomBlock(r, labels, prefixes, effectiveNoColor, config, comment);
       }
       if (pre) System.out.println("</pre>");
     } else {
@@ -883,7 +939,8 @@ public class SWRLTabCLI {
    * wrapped in HTML {@code <span>} tags using the predicate-style map from the config.
    */
   private static void printAtomBlock(SWRLAPIRule rule, Map<IRI, String> labels,
-      Map<String, String> prefixes, boolean noColor, SwrltabConfig config) {
+      Map<String, String> prefixes, boolean noColor, SwrltabConfig config, String comment) {
+    if (comment != null && !comment.isEmpty()) System.out.println("# " + comment);
     List<SWRLAtom> body = new ArrayList<>(rule.getBody());
     List<SWRLAtom> head = new ArrayList<>(rule.getHead());
 
