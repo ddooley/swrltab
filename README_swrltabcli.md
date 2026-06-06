@@ -226,27 +226,27 @@ Config is loaded from these locations in order (later entries override earlier o
 
 Example `swrltab_config.yaml`:
 
-```yaml
+<pre>
 entity_styles:
-  process: "span {color: blue;}"
-  material: "span {color: green;}"
-  characteristic: "span {color: tan;}"
-  characteristic_value: "span {color: saddlebrown;}"
-  information: "span {color: dimgray;}"
-  error: "span {color: red;}"   # unbound variables — override to change highlight
+  <span style="color:blue">process</span>:              "span {color: blue;}"
+  <span style="color:green">material</span>:             "span {color: green;}"
+  <span style="color:tan">characteristic</span>:       "span {color: tan;}"
+  <span style="color:saddlebrown">characteristic_value</span>: "span {color: saddlebrown;}"
+  <span style="color:dimgray">information</span>:          "span {color: dimgray;}"
+  <span style="color:red">error</span>:               "span {color: red;}"   # unbound variables — override to change highlight
 
 predicate_styles:
-  "has specified input":       [process, material]
-  "has specified output":      [process, material]
-  "has characteristic":        [material, characteristic]
-  "has characteristic value":  [characteristic, characteristic_value]
-  "has quantity":              [characteristic, material]
-  "mass in kilograms":         [characteristic]
-  "combining two materials":   [process]
-  "add":                       [material]
-  "temperature":               [characteristic]
-  "characteristic value of":   [characteristic_value, characteristic]
-```
+  "has specified input":       [<span style="color:blue">process</span>, <span style="color:green">material</span>]
+  "has specified output":      [<span style="color:blue">process</span>, <span style="color:green">material</span>]
+  "has characteristic":        [<span style="color:green">material</span>, <span style="color:tan">characteristic</span>]
+  "has characteristic value":  [<span style="color:tan">characteristic</span>, <span style="color:saddlebrown">characteristic_value</span>]
+  "has quantity":              [<span style="color:saddlebrown">characteristic_value</span>, <span style="color:dimgray">information</span>]
+  "mass in kilograms":         [<span style="color:saddlebrown">characteristic_value</span>]
+  "combining two materials":   [<span style="color:blue">process</span>]
+  "swrlb:add":                 [<span style="color:dimgray">information</span>]
+  "temperature":               [<span style="color:tan">characteristic</span>]
+  "characteristic value of":   [<span style="color:saddlebrown">characteristic_value</span>, <span style="color:tan">characteristic</span>]
+</pre>
 
 Entity style values follow the pattern `"element {css-properties}"`, where `element` is the HTML element to use (e.g. `span`) and the braces contain standard CSS.  If a predicate has more arguments than entries in its style list, the last entry is repeated.
 

@@ -236,7 +236,9 @@ public class SWRLTabCLI {
       } else if (ruleText != null) {
         Map<String, IRI> labelToIRI = buildLabelToIRIMap(ontology);
         Map<String, String> ruleTextPrefixes = buildMergedPrefixMap(manager, ontology);
-        ruleText = preprocessRuleText(ruleText, labelToIRI, ruleTextPrefixes);
+        Map<String, String> rtLabels = new LinkedHashMap<>(), rtBare = new LinkedHashMap<>();
+        ruleText = preprocessRuleText(ruleText, labelToIRI, ruleTextPrefixes, rtLabels, rtBare);
+        printResolutionSummary(rtLabels, rtBare);
         SWRLRuleEngine parseEngine = SWRLAPIFactory.createSWRLRuleEngine(ontology);
         parseEngine.createSWRLRule(ruleTextName, ruleText);
         runRules(manager, ontology, Collections.singletonList(ruleTextName), debug, constraints,
@@ -391,6 +393,8 @@ public class SWRLTabCLI {
     // Build label-resolution tables once for the whole file.
     Map<String, IRI> labelToIRI = buildLabelToIRIMap(ontology);
     Map<String, String> prefixes = buildMergedPrefixMap(ontology.getOWLOntologyManager(), ontology);
+    Map<String, String> resolvedLabels = new LinkedHashMap<>();
+    Map<String, String> resolvedBarePredicates = new LinkedHashMap<>();
 
     String currentName = null;
     String currentComment = null;
@@ -426,7 +430,7 @@ public class SWRLTabCLI {
       if (lower.startsWith("rule ") || lower.startsWith("query ")) {
         // Flush previous entry before starting a new one
         if (currentName != null && body.length() > 0) {
-          String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes);
+          String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes, resolvedLabels, resolvedBarePredicates);
           removeExistingRuleByName(ontology, currentName, true);
           engine.createSWRLRule(currentName, expr);
           if (currentComment != null) addCommentToRule(ontology, currentName, currentComment);
@@ -455,7 +459,7 @@ public class SWRLTabCLI {
 
     // Flush the last entry
     if (currentName != null && body.length() > 0) {
-      String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes);
+      String expr = preprocessRuleText(body.toString().trim(), labelToIRI, prefixes, resolvedLabels, resolvedBarePredicates);
       removeExistingRuleByName(ontology, currentName, true);
       engine.createSWRLRule(currentName, expr);
       if (currentComment != null) addCommentToRule(ontology, currentName, currentComment);
@@ -463,6 +467,7 @@ public class SWRLTabCLI {
     }
 
     System.err.println("Loaded " + loaded + " rule(s)/query(ies) from " + filePath);
+    printResolutionSummary(resolvedLabels, resolvedBarePredicates);
   }
 
   /**
@@ -533,8 +538,16 @@ public class SWRLTabCLI {
    * <p>Unresolved labels produce a stderr warning and are left unchanged, which
    * will cause a SWRL parse error at rule creation time.
    */
+  /**
+   * Resolves quoted labels and bare predicate tokens in a SWRL/SQWRL expression.
+   * Resolutions are accumulated in {@code resolvedLabels} and {@code resolvedBarePredicates}
+   * (keyed by original name, value is the resolved prefixed IRI).  Already-cached entries are
+   * reused directly, avoiding redundant {@code iriToPrefixed} calls across multiple rules.
+   * Callers print the summary with {@link #printResolutionSummary} after all rules are processed.
+   */
   private static String preprocessRuleText(String text, Map<String, IRI> labelToIRI,
-      Map<String, String> prefixes) {
+      Map<String, String> prefixes, Map<String, String> resolvedLabels,
+      Map<String, String> resolvedBarePredicates) {
     // First pass: resolve "double-quoted label"( and 'single-quoted label'( tokens.
     if (text.contains("\"") || text.contains("'")) {
       Pattern quoted = Pattern.compile("(?:\"([^\"]+)\"|'([^']+)')(?=\\s*\\()");
@@ -542,15 +555,20 @@ public class SWRLTabCLI {
       StringBuffer sb = new StringBuffer();
       while (m.find()) {
         String label = m.group(1) != null ? m.group(1) : m.group(2);
-        IRI iri = labelToIRI.get(label);
         String replacement;
-        if (iri == null) {
-          System.err.println("Warning: no ontology entity with rdfs:label \""
-              + label + "\" — leaving unchanged (likely causes a parse error)");
-          replacement = Matcher.quoteReplacement(m.group(0));
+        if (resolvedLabels.containsKey(label)) {
+          replacement = Matcher.quoteReplacement(resolvedLabels.get(label));
         } else {
-          replacement = Matcher.quoteReplacement(iriToPrefixed(iri, prefixes));
-          System.err.println("  Resolved label \"" + label + "\" → " + replacement);
+          IRI iri = labelToIRI.get(label);
+          if (iri == null) {
+            System.err.println("Warning: no ontology entity with rdfs:label \""
+                + label + "\" — leaving unchanged (likely causes a parse error)");
+            replacement = Matcher.quoteReplacement(m.group(0));
+          } else {
+            String resolved = iriToPrefixed(iri, prefixes);
+            resolvedLabels.put(label, resolved);
+            replacement = Matcher.quoteReplacement(resolved);
+          }
         }
         m.appendReplacement(sb, replacement);
       }
@@ -574,14 +592,19 @@ public class SWRLTabCLI {
       boolean anyResolved = false;
       while (m2.find()) {
         String token = m2.group(1);
-        IRI iri = labelToIRI.get(token);
-        if (iri != null) {
-          String replacement = Matcher.quoteReplacement(iriToPrefixed(iri, prefixes));
-          System.err.println("  Resolved bare predicate \"" + token + "\" → " + replacement);
-          m2.appendReplacement(sb2, replacement);
+        if (resolvedBarePredicates.containsKey(token)) {
+          m2.appendReplacement(sb2, Matcher.quoteReplacement(resolvedBarePredicates.get(token)));
           anyResolved = true;
         } else {
-          m2.appendReplacement(sb2, Matcher.quoteReplacement(token));
+          IRI iri = labelToIRI.get(token);
+          if (iri != null) {
+            String resolved = iriToPrefixed(iri, prefixes);
+            resolvedBarePredicates.put(token, resolved);
+            m2.appendReplacement(sb2, Matcher.quoteReplacement(resolved));
+            anyResolved = true;
+          } else {
+            m2.appendReplacement(sb2, Matcher.quoteReplacement(token));
+          }
         }
       }
       m2.appendTail(sb2);
@@ -589,6 +612,19 @@ public class SWRLTabCLI {
     }
 
     return text;
+  }
+
+  /** Prints a summary of label and bare-predicate resolutions accumulated across all rules. */
+  private static void printResolutionSummary(Map<String, String> resolvedLabels,
+      Map<String, String> resolvedBarePredicates) {
+    if (!resolvedLabels.isEmpty()) {
+      System.err.println("  Quoted labels resolved:");
+      resolvedLabels.forEach((k, v) -> System.err.println("    \"" + k + "\" → " + v));
+    }
+    if (!resolvedBarePredicates.isEmpty()) {
+      System.err.println("  Bare predicates resolved:");
+      resolvedBarePredicates.forEach((k, v) -> System.err.println("    " + k + " → " + v));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -623,7 +659,7 @@ public class SWRLTabCLI {
     if (debug) {
       // Debug mode: print a body-atom evaluation table for every SWRL rule.
       System.out.println(ontologyHeader(ontologyName, catalogNote, inferred.size(), format));
-      System.out.println(debugLegend(format));
+      System.out.println(debugLegend(format, config));
       OWLDataFactory df = manager.getOWLDataFactory();
       Map<IRI, String> labels = buildLabelMap(ontology);
       Map<IRI, Set<IRI>> inverseMap = buildInversePropertyMap(ontology);
@@ -720,7 +756,7 @@ public class SWRLTabCLI {
 
     if (debug) {
       System.out.println(ontologyHeader(ontologyName, catalogNote, inferred.size(), format));
-      System.out.println(debugLegend(format));
+      System.out.println(debugLegend(format, config));
       boolean md = format.equals("markdown");
       OWLDataFactory df = manager.getOWLDataFactory();
       Map<String, String> mergedPrefixes = buildMergedPrefixMap(manager, ontology);
@@ -802,7 +838,9 @@ public class SWRLTabCLI {
 
     if (queryText != null) {
       Map<String, String> prefixes = buildMergedPrefixMap(ontology.getOWLOntologyManager(), ontology);
-      queryText = preprocessRuleText(queryText, buildLabelToIRIMap(ontology), prefixes);
+      Map<String, String> qtLabels = new LinkedHashMap<>(), qtBare = new LinkedHashMap<>();
+      queryText = preprocessRuleText(queryText, buildLabelToIRIMap(ontology), prefixes, qtLabels, qtBare);
+      printResolutionSummary(qtLabels, qtBare);
     }
     SQWRLQueryEngine engine = SWRLAPIFactory.createSQWRLQueryEngine(ontology);
     SQWRLResult result = (queryText != null)
@@ -1400,17 +1438,16 @@ public class SWRLTabCLI {
     c.entityStyles.put("material",             new EntityStyleDef("span", "color: green"));
     c.entityStyles.put("characteristic",       new EntityStyleDef("span", "color: tan"));
     c.entityStyles.put("characteristic_value", new EntityStyleDef("span", "color: saddlebrown"));
-    c.entityStyles.put("quantity",             new EntityStyleDef("span", "color: purple"));
     c.entityStyles.put("information",          new EntityStyleDef("span", "color: dimgray"));
     c.entityStyles.put("error",                new EntityStyleDef("span", "color: red"));
     c.predicateStyles.put("has specified input",      Arrays.asList("process",              "material"));
     c.predicateStyles.put("has specified output",     Arrays.asList("process",              "material"));
     c.predicateStyles.put("has characteristic",       Arrays.asList("material",             "characteristic"));
     c.predicateStyles.put("has characteristic value", Arrays.asList("characteristic",       "characteristic_value"));
-    c.predicateStyles.put("has quantity",             Arrays.asList("material",             "quantity"));
+    c.predicateStyles.put("has quantity",             Arrays.asList("characteristic_value", "information"));
     c.predicateStyles.put("mass in kilograms",        Arrays.asList("characteristic_value"));
     c.predicateStyles.put("combining two materials",  Arrays.asList("process"));
-    c.predicateStyles.put("swrlb:add",                Arrays.asList("quantity"));
+    c.predicateStyles.put("swrlb:add",                Arrays.asList("information"));
     c.predicateStyles.put("temperature",              Arrays.asList("characteristic"));
     c.predicateStyles.put("characteristic value of",  Arrays.asList("characteristic_value", "characteristic"));
     return c;
@@ -1524,6 +1561,15 @@ public class SWRLTabCLI {
     for (Map.Entry<String, EntityStyleDef> e : config.entityStyles.entrySet())
       sb.append(".").append(e.getKey()).append(" { ").append(e.getValue().cssBlock).append("; white-space: nowrap }\n");
     return sb.toString().trim();
+  }
+
+  /** Returns a one-line HTML legend with each entity style name rendered in its own colour. */
+  private static String buildColorLegend(SwrltabConfig config) {
+    if (config.entityStyles.isEmpty()) return "";
+    List<String> parts = new ArrayList<>();
+    for (String key : config.entityStyles.keySet())
+      parts.add(classSpan(key, key, config));
+    return "**Legend:** " + String.join(" &nbsp;·&nbsp; ", parts);
   }
 
   /**
@@ -1735,11 +1781,11 @@ public class SWRLTabCLI {
     if (md) {
       System.out.println("## Rule: " + rule.getRuleName());
       System.out.println();
-      System.out.println(mdRow(Arrays.asList("row", "status", "predicate", "match", "variables", "notes")));
+      System.out.println(mdRow(Arrays.asList("row", "status", "predicate", "variables", "match", "notes")));
       System.out.println(mdSep(6));
     } else {
       System.out.println("# Rule: " + rule.getRuleName());
-      System.out.println("  row\tstatus\tpredicate\tmatch\tvariables\tnotes");
+      System.out.println("  row\tstatus\tpredicate\tvariables\tmatch\tnotes");
     }
 
     // --- Indent levels: atom i is indented one level deeper than the latest preceding
@@ -1809,9 +1855,9 @@ public class SWRLTabCLI {
         String statusStr = r.skip ? "SKIP" : (r.satisfied
             ? "<span style=\"color: green;\">PASS</span>" : "FAIL");
         System.out.println(mdRow(Arrays.asList(
-            String.valueOf(idx + 1), statusStr, predCell, matchCell, varCell, noteCell)));
+            String.valueOf(idx + 1), statusStr, predCell, varCell, matchCell, noteCell)));
         for (String d : details)
-          System.out.println(mdRow(Arrays.asList("", "", "", "*" + d + "*", "", "")));
+          System.out.println(mdRow(Arrays.asList("", "", "", "", "*" + d + "*", "")));
       } else {
         String[] parts   = display.split("\t", 2);
         String predCell  = txtIndent + parts[0];
@@ -1819,7 +1865,7 @@ public class SWRLTabCLI {
         String varCell   = varNames.isEmpty() ? "" : "(" + String.join(", ", varNames) + ")";
         String statusStr = r.skip ? "SKIP" : (r.satisfied ? "PASS" : "FAIL");
         System.out.printf("  %2d\t%s\t%s\t%s\t%s\t%s%n",
-            idx + 1, statusStr, predCell, matchCell, varCell, noteCell);
+            idx + 1, statusStr, predCell, varCell, matchCell, noteCell);
         for (String d : details)
           System.out.println("\t\t\t\t" + d);
       }
@@ -1831,8 +1877,6 @@ public class SWRLTabCLI {
         ? (md ? "<span style=\"color: green;\">PASS</span>" : "PASS") : "SKIP";
     if (!head.isEmpty()) {
       if (md) {
-        // Arrow as a divider row in the predicate column; merged into the body table, no new header.
-        System.out.println(mdRow(Arrays.asList("", "", "→", "", "", "")));
         for (int idx = 0; idx < head.size(); idx++) {
           SWRLAtom atom = head.get(idx);
           String display = formatAtomColored(atom, indBindings, litBindings, labels, colorize, config);
@@ -1841,22 +1885,25 @@ public class SWRLTabCLI {
           String hvnStr = hvn.isEmpty() ? "" : (colorize
               ? String.join(", ", colorizeAtomVars(atom, indBindings, litBindings, labels, config))
               : String.join(", ", hvn));
+          String predPrefix = idx == 0 ? "→ " : "&nbsp;&nbsp;";
           System.out.println(mdRow(Arrays.asList(
-              String.valueOf(idx + 1), headStatus,
-              "<span style=\"white-space: nowrap\">" + parts[0] + "</span>",
-              parts.length > 1 ? parts[1] : "",
+              String.valueOf(body.size() + idx + 1), headStatus,
+              "<span style=\"white-space: nowrap\">" + predPrefix + parts[0] + "</span>",
               hvnStr,
+              parts.length > 1 ? parts[1] : "",
               "")));
         }
       } else {
-        System.out.println("  ->");
-        System.out.println("  row\tstatus\tpredicate\tmatch\tvariables");
         for (int idx = 0; idx < head.size(); idx++) {
           SWRLAtom atom = head.get(idx);
           String display = formatAtomColored(atom, indBindings, litBindings, labels, false, config);
+          String[] hparts = display.split("\t", 2);
           List<String> hvn = getAtomVarNames(atom);
           String varCell = hvn.isEmpty() ? "" : "(" + String.join(", ", hvn) + ")";
-          System.out.printf("  %2d\t%s\t%s\t%s%n", idx + 1, headStatus, display, varCell);
+          String predPrefix = idx == 0 ? "-> " : "   ";
+          System.out.printf("  %2d\t%s\t%s\t%s\t%s%n",
+              body.size() + idx + 1, headStatus, predPrefix + hparts[0], varCell,
+              hparts.length > 1 ? hparts[1] : "");
         }
       }
     }
@@ -2675,12 +2722,22 @@ public class SWRLTabCLI {
     return prefix + "Ontology: " + name + " (" + detail + ")";
   }
 
-  /** One-line status legend printed once per debug report. */
-  private static String debugLegend(String format) {
-    String legend = "PASS = matching assertion found in ontology; "
-        + "FAIL = no matching assertion found (predicate looked up, specific fact absent); "
-        + "SKIP = not evaluated (required variable(s) unbound)";
-    return format.equals("markdown") ? "*" + legend + "*" : legend;
+  /** Colour and status legend printed once per debug report, below the ontology header. */
+  private static String debugLegend(String format, SwrltabConfig config) {
+    boolean md = format.equals("markdown");
+    StringBuilder sb = new StringBuilder();
+    if (md) {
+      String colorLegend = buildColorLegend(config);
+      if (!colorLegend.isEmpty()) sb.append(colorLegend).append("  \n");
+      sb.append("**PASS** = matching assertion found in ontology  \n");
+      sb.append("**FAIL** = no matching assertion found (predicate looked up, specific fact absent)  \n");
+      sb.append("**SKIP** = not evaluated (required variable(s) unbound)");
+    } else {
+      sb.append("PASS = matching assertion found in ontology\n");
+      sb.append("FAIL = no matching assertion found (predicate looked up, specific fact absent)\n");
+      sb.append("SKIP = not evaluated (required variable(s) unbound)");
+    }
+    return sb.toString();
   }
 
   /** Escapes characters that would break a markdown table cell. */
