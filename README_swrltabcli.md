@@ -1,7 +1,7 @@
 SWRLTabCLI
 ==========
 
-SWRLTabCLI is a headless command-line add-on to [SWRLTab](https://github.com/protegeproject/swrltab) for running SWRL inference and SQWRL queries without a GUI.  It was developed by Damion Dooley at the [Centre for Infectious Disease Genomics and One Health (CIDGOH)](https://cidgoh.ca) at Simon Fraser University. The SWRLTabCLI code was generated with [Claude Code](https://claude.ai/code).
+SWRLTabCLI is a headless command-line add-on to [SWRLTab](https://github.com/protegeproject/swrltab) for running [SWRL](https://www.w3.org/submissions/SWRL/) inference and SQWRL queries without a GUI.  It was developed by Damion Dooley at the [Centre for Infectious Disease Genomics and One Health (CIDGOH)](https://cidgoh.ca) at Simon Fraser University. The SWRLTabCLI code was generated with [Claude Code](https://claude.ai/code).
 
 Build the fat JAR first (only needed once, or after code changes):
 
